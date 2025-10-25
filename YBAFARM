@@ -1,4 +1,4 @@
--- ✅ Авто-сбор, продажа, телепортация с платформой, камерой сверху и сервер-хоп с GUI для времени
+-- ✅ Авто-сбор с автосканом, автозапуском, загрузкой после св-хопа и кликом Play
 local Players = game:GetService("Players")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
@@ -17,8 +17,8 @@ screenGui.Name = "AutoCollectorUI"
 screenGui.Parent = playerGui
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.new(0, 260, 0, 220)
-frame.Position = UDim2.new(0, 25, 0.5, -110)
+frame.Size = UDim2.new(0, 260, 0, 250)
+frame.Position = UDim2.new(0, 25, 0.5, -125)
 frame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
 frame.BorderSizePixel = 0
 frame.Parent = screenGui
@@ -83,25 +83,71 @@ local collectedCount = 0
 local itemsFolder = workspace:FindFirstChild("Item_Spawns") and workspace.Item_Spawns:FindFirstChild("Items")
 local TELEPORT_STEP = 50
 local TELEPORT_DELAY = 0.03
-local SERVER_HOP_INTERVAL = tonumber(hopInput.Text) or 60 -- сек по умолчанию
+local SERVER_HOP_INTERVAL = tonumber(hopInput.Text) or 60
 
-hopInput.FocusLost:Connect(function(enterPressed)
+hopInput.FocusLost:Connect(function()
 	local num = tonumber(hopInput.Text)
 	if num and num > 0 then
 		SERVER_HOP_INTERVAL = num
-		print("[ℹ️] Время для сервер-хопа обновлено на: " .. SERVER_HOP_INTERVAL .. " сек")
 	else
 		hopInput.Text = tostring(SERVER_HOP_INTERVAL)
 	end
 end)
 
 ------------------------------------------------------------
--- NOCLIP (всегда)
+-- 💾 Автозапуск
+------------------------------------------------------------
+local autoStartFile = "AutoCollectorConfig.json"
+local autoStartEnabled = false
+
+pcall(function()
+	if isfile and isfile(autoStartFile) then
+		local data = HttpService:JSONDecode(readfile(autoStartFile))
+		autoStartEnabled = data.autoStart or false
+	end
+end)
+
+local autoStartLabel = Instance.new("TextLabel")
+autoStartLabel.Size = UDim2.new(0.5, -20, 0, 25)
+autoStartLabel.Position = UDim2.new(0, 10, 0, 205)
+autoStartLabel.BackgroundTransparency = 1
+autoStartLabel.TextColor3 = Color3.new(1,1,1)
+autoStartLabel.Font = Enum.Font.SourceSans
+autoStartLabel.TextSize = 16
+autoStartLabel.Text = "Автозапуск:"
+autoStartLabel.TextXAlignment = Enum.TextXAlignment.Left
+autoStartLabel.Parent = frame
+
+local autoStartBtn = Instance.new("TextButton")
+autoStartBtn.Size = UDim2.new(0.5, -20, 0, 25)
+autoStartBtn.Position = UDim2.new(0.5, 10, 0, 205)
+autoStartBtn.BackgroundColor3 = autoStartEnabled and Color3.fromRGB(50,160,70) or Color3.fromRGB(100,100,100)
+autoStartBtn.TextColor3 = Color3.new(1,1,1)
+autoStartBtn.Font = Enum.Font.SourceSansBold
+autoStartBtn.TextSize = 16
+autoStartBtn.Text = autoStartEnabled and "Вкл" or "Выкл"
+autoStartBtn.Parent = frame
+
+local function saveConfig()
+	if writefile then
+		writefile(autoStartFile, HttpService:JSONEncode({autoStart = autoStartEnabled}))
+	end
+end
+
+autoStartBtn.MouseButton1Click:Connect(function()
+	autoStartEnabled = not autoStartEnabled
+	autoStartBtn.BackgroundColor3 = autoStartEnabled and Color3.fromRGB(50,160,70) or Color3.fromRGB(100,100,100)
+	autoStartBtn.Text = autoStartEnabled and "Вкл" or "Выкл"
+	saveConfig()
+end)
+
+------------------------------------------------------------
+-- NOCLIP
 ------------------------------------------------------------
 RunService.RenderStepped:Connect(function()
 	if character then
 		for _,v in pairs(character:GetDescendants()) do
-			if v:IsA('BasePart') then
+			if v:IsA("BasePart") then
 				v.CanCollide = false
 			end
 		end
@@ -109,7 +155,7 @@ RunService.RenderStepped:Connect(function()
 end)
 
 ------------------------------------------------------------
--- 🎯 Цели для сбора
+-- 🎯 Цели
 ------------------------------------------------------------
 local allowedItems = {
 	["Mysterious Arrow"] = true,
@@ -126,11 +172,10 @@ local allowedItems = {
 }
 
 ------------------------------------------------------------
--- 🚀 Телепортация с платформой
+-- 🚀 Телепортация
 ------------------------------------------------------------
 local function safeTeleport(targetPos)
-	if not humanoidRootPart or not character then return end
-
+	if not humanoidRootPart then return end
 	local platform = Instance.new("Part")
 	platform.Size = Vector3.new(10,1,10)
 	platform.Anchored = true
@@ -151,58 +196,52 @@ local function safeTeleport(targetPos)
 		platform.Position = humanoidRootPart.Position - Vector3.new(0,3,0)
 		task.wait(TELEPORT_DELAY)
 	end
-
 	platform:Destroy()
 end
 
 ------------------------------------------------------------
--- 🧲 Сбор предметов с камерой сверху
+-- 🧲 Сбор
 ------------------------------------------------------------
 local function moveAndCollect(model, prompt)
 	local basePart = model:FindFirstChildWhichIsA("BasePart")
 	if not basePart or not prompt then return end
-
-	safeTeleport(basePart.Position)
-	task.wait(0.05)
-
 	local cam = workspace.CurrentCamera
-	local oldType = cam.CameraType
-	local oldCFrame = cam.CFrame
+	local oldType, oldCFrame = cam.CameraType, cam.CFrame
 	cam.CameraType = Enum.CameraType.Scriptable
-	cam.CFrame = CFrame.new(humanoidRootPart.Position + Vector3.new(0,30,0), basePart.Position)
-
-	if prompt.Enabled then
-		prompt:InputHoldBegin()
-		task.wait((prompt.HoldDuration or 0.5) + 0.05)
-		prompt:InputHoldEnd()
-	end
-
-	cam.CameraType = oldType
-	cam.CFrame = oldCFrame
-
-	local startTime = os.clock()
-	while model.Parent == itemsFolder and os.clock() - startTime < 3 do
+	for attempt = 1, 3 do
+		if not isRunning then break end
+		safeTeleport(basePart.Position)
 		task.wait(0.05)
+		local ray = workspace:Raycast(humanoidRootPart.Position, Vector3.new(0, 100, 0))
+		local height = ray and (ray.Position.Y - humanoidRootPart.Position.Y - 5) or 30
+		cam.CFrame = CFrame.new(humanoidRootPart.Position + Vector3.new(0, height, 0), basePart.Position)
+		if prompt.Enabled then
+			prompt:InputHoldBegin()
+			task.wait((prompt.HoldDuration or 0.5) + 0.1)
+			prompt:InputHoldEnd()
+		end
+		if not model.Parent then
+			collectedCount += 1
+			counterLabel.Text = "Подобрано: " .. collectedCount
+			break
+		end
+		task.wait(0.3)
 	end
-
-	collectedCount += 1
-	counterLabel.Text = "Подобрано: " .. collectedCount
+	cam.CameraType, cam.CFrame = oldType, oldCFrame
 end
 
 ------------------------------------------------------------
--- 💰 Продажа предметов
+-- 💰 Продажа
 ------------------------------------------------------------
-local SELL_DELAY = 0.2
-
 local function sellItem(item)
 	if not item then return end
-	local foundItem = player.Backpack:FindFirstChild(item.Name)
-	if foundItem then
-		foundItem.Parent = workspace.Living:FindFirstChild(player.Name)
+	local found = player.Backpack:FindFirstChild(item.Name)
+	if found then
+		found.Parent = workspace.Living:FindFirstChild(player.Name)
 	end
 	local remote = character:FindFirstChild("RemoteEvent")
 	if remote then
-		remote:FireServer("EndDialogue", {["NPC"]="Merchant", ["Option"]="Option2", ["Dialogue"]="Dialogue5"})
+		remote:FireServer("EndDialogue", {["NPC"]="Merchant",["Option"]="Option2",["Dialogue"]="Dialogue5"})
 	end
 end
 
@@ -210,33 +249,65 @@ local function sellAllowedItems()
 	for _, item in pairs(player.Backpack:GetChildren()) do
 		if allowedItems[item.Name] then
 			sellItem(item)
-			task.wait(SELL_DELAY)
+			task.wait(0.2)
 		end
 	end
 end
 
 ------------------------------------------------------------
--- 🔁 Основной цикл сбора + сервер-хоп
+-- 🔁 Скан и хоп
 ------------------------------------------------------------
+local scanPositions = {}
+for x = -400, 400, 200 do
+	for z = -400, 400, 200 do
+		table.insert(scanPositions, Vector3.new(x, 50, z))
+	end
+end
+
+local function randomScanTeleport()
+	if not humanoidRootPart then return end
+	local pos = scanPositions[math.random(1, #scanPositions)]
+	print("[🔍] Скан карты...")
+	safeTeleport(pos)
+end
+
+-- Новая функция для корректного нажатия Play в Xenon
+local function waitForAssets()
+	print("[🕐] Ожидание загрузки...")
+	local gui = player:WaitForChild("PlayerGui")
+	local loadingScreen = gui:WaitForChild("LoadingScreen", 20)
+	if loadingScreen then
+		local frames = loadingScreen:WaitForChild("Frames")
+		local gamemodes = frames:WaitForChild("Gamemodes")
+		local mainGame = gamemodes:WaitForChild("MainGame")
+		local playBtn = mainGame:WaitForChild("Play")
+		if playBtn:IsA("TextButton") or playBtn:IsA("ImageButton") then
+			repeat task.wait() until playBtn.Visible == true
+			playBtn:Activate()
+			print("[🟢] Play кнопка нажата")
+		end
+	end
+end
+
 local function serverHop()
-	local success, servers = pcall(function()
+	local ok, servers = pcall(function()
 		return HttpService:JSONDecode(game:HttpGet("https://games.roblox.com/v1/games/"..PlaceId.."/servers/Public?sortOrder=Asc&limit=100"))
 	end)
-	if not success or not servers or not servers.data then return end
-
-	local minPlayers, chosenServer = math.huge, nil
+	if not ok or not servers or not servers.data then return end
+	local minPlayers, chosen = math.huge, nil
 	for _, s in pairs(servers.data) do
 		if s.playing < minPlayers and s.id ~= game.JobId then
-			minPlayers = s.playing
-			chosenServer = s.id
+			minPlayers, chosen = s.playing, s.id
 		end
 	end
-
-	if chosenServer then
-		TeleportService:TeleportToPlaceInstance(PlaceId, chosenServer, player)
+	if chosen then
+		TeleportService:TeleportToPlaceInstance(PlaceId, chosen, player)
 	end
 end
 
+------------------------------------------------------------
+-- 🔁 Главный цикл
+------------------------------------------------------------
 local function mainAutoCollect()
 	local lastHop = tick()
 	while isRunning do
@@ -244,24 +315,25 @@ local function mainAutoCollect()
 			task.wait(1)
 			itemsFolder = workspace:FindFirstChild("Item_Spawns") and workspace.Item_Spawns:FindFirstChild("Items")
 		end
-
+		local found = false
 		for _, model in ipairs(itemsFolder:GetChildren()) do
 			if not isRunning then break end
 			local prompt = model:FindFirstChildWhichIsA("ProximityPrompt", true)
 			if prompt and allowedItems[prompt.ObjectText] then
+				found = true
 				moveAndCollect(model, prompt)
 			end
 		end
-
+		if not found then
+			randomScanTeleport()
+			task.wait(1.5)
+		end
 		sellAllowedItems()
-		task.wait(0.05) -- быстрое сканирование
-
-		-- Сервер-хоп по таймеру
+		task.wait(0.1)
 		if tick() - lastHop >= SERVER_HOP_INTERVAL then
 			lastHop = tick()
-			print("[ℹ️] Выполняется сервер-хоп...")
 			serverHop()
-			break -- остановка скрипта после хопа
+			break
 		end
 	end
 end
@@ -284,4 +356,30 @@ end
 startBtn.MouseButton1Click:Connect(startAutoCollect)
 stopBtn.MouseButton1Click:Connect(stopAutoCollect)
 
-print("[✅] Авто-сбор с платформой, камерой сверху и сервер-хопом запущен.")
+------------------------------------------------------------
+-- 🟢 Автозапуск при старте с проверкой работы
+------------------------------------------------------------
+task.defer(function()
+	if autoStartEnabled then
+		print("[⚙️] Автозапуск активен — ожидание загрузки...")
+		waitForAssets()
+		task.wait(2)
+		startAutoCollect()
+	end
+end)
+
+-- 🔄 Фоновая проверка работы скрипта
+task.spawn(function()
+	while true do
+		task.wait(1) -- проверяем каждые 5 секунд
+		if autoStartEnabled then
+			if not isRunning then
+				print("[⚠️] Скрипт не работает! Перезапуск...")
+				waitForAssets() -- ждем, пока загрузятся кнопки/GUI
+				startAutoCollect() -- запускаем сбор снова
+			end
+		end
+	end
+end)
+
+print("[✅] Скрипт активен: авто-сбор, камера сверху, автозапуск и сканирование готовы.")
